@@ -1,0 +1,104 @@
+@mode(host.dual)
+
+# Tests for planning and carrying out moves (commands/move.loup). Each test
+# builds its own tree under build/tmp/.
+
+from debug.assert import (expect, expectEq);
+from io.fs import (createDir, writeText, readText, removeDir, isDir, isFile, exists);
+from win.messages import (MSG_ACCESS_DENIED, MSG_FILE_NOT_FOUND, MSG_INVALID_NAME, MSG_PATH_NOT_FOUND);
+from commands.move import (plan_move, move_file, move_dir, copy_then_remove, summary_line,
+    MSG_MULTIPLE_TO_ONE, MSG_FILE_EXISTS);
+
+func make_tree(root: string): void {
+    if (isDir(root)) {
+        removeDir(root);
+    }
+    createDir(root + "/sub");
+    createDir(root + "/dir/inner");
+    writeText(root + "/a.txt", "alpha\n");
+    writeText(root + "/b.txt", "bravo\n");
+    writeText(root + "/c.log", "charlie\n");
+}
+
+func test_plan_into_directory(): void {
+    let root = "build/tmp/move_into";
+    make_tree(root);
+    let plan = plan_move(root + "\\a.txt", root + "\\sub\\", "/w");
+    expectEq(plan.error, "", "no error");
+    expectEq(plan.steps.len(), 1, "one step");
+    expectEq(plan.steps[0].src, root + "/a.txt", "source in fs form");
+    expectEq(plan.steps[0].dst, root + "/sub/a.txt", "keeps the name");
+    expect(!plan.show_names, "a literal source is not listed");
+    removeDir(root);
+}
+
+func test_plan_wildcard(): void {
+    let root = "build/tmp/move_wild";
+    make_tree(root);
+    let plan = plan_move(root + "/*.TXT", root + "/sub", "/w");
+    expectEq(plan.steps.len(), 2, "two files");
+    expectEq(plan.steps[1].dst, root + "/sub/b.txt", "second");
+    expect(plan.show_names, "wildcard moves list the files");
+    expectEq(plan_move(root + "/*", root + "/sub", "/w").steps.len(), 3, "files only");
+    expectEq(plan_move(root + "/*.txt", root + "/one.txt", "/w").error, MSG_MULTIPLE_TO_ONE, "many to one");
+    expectEq(plan_move(root + "/*.log", root + "/one.txt", "/w").steps[0].dst, root + "/one.txt", "one match renames");
+    removeDir(root);
+}
+
+func test_plan_rename_and_directories(): void {
+    let root = "build/tmp/move_rename";
+    make_tree(root);
+    expectEq(plan_move(root + "/a.txt", root + "/z.txt", "/w").steps[0].dst, root + "/z.txt", "rename");
+    let dir = plan_move(root + "/dir", root + "/renamed", "/w");
+    expect(dir.steps[0].is_dir, "a directory");
+    expectEq(dir.steps[0].dst, root + "/renamed", "rename a directory");
+    expectEq(plan_move(root + "/dir", root + "/sub", "/w").steps[0].dst, root + "/sub/dir", "into a directory");
+    expectEq(plan_move(root + "/dir", root + "/a.txt", "/w").error, MSG_FILE_EXISTS, "onto a file");
+    expectEq(plan_move(root + "/dir", root + "/dir/inner", "/w").error, MSG_ACCESS_DENIED, "into itself");
+    expectEq(plan_move(root + "/dir", root + "/dir", "/w").error, MSG_ACCESS_DENIED, "onto itself");
+    removeDir(root);
+}
+
+func test_plan_errors(): void {
+    let root = "build/tmp/move_errors";
+    make_tree(root);
+    expectEq(plan_move(root + "/none.txt", root + "/sub", "/w").error, MSG_FILE_NOT_FOUND, "missing file");
+    expectEq(plan_move(root + "/no/a.txt", root + "/sub", "/w").error, MSG_PATH_NOT_FOUND, "missing directory");
+    expectEq(plan_move(root + "/*.none", root + "/sub", "/w").error, MSG_FILE_NOT_FOUND, "no match");
+    expectEq(plan_move(root + "/s*/a.txt", root + "/sub", "/w").error, MSG_INVALID_NAME, "wildcard in a directory");
+    expectEq(plan_move(root + "/a.txt", root + "/*.bak", "/w").error, MSG_INVALID_NAME, "wildcard destination");
+    expectEq(plan_move(root + "/a.txt", root + "/no/x.txt", "/w").error, MSG_PATH_NOT_FOUND, "missing target directory");
+    expectEq(plan_move(root + "/a.txt", root + "/new/", "/w").error, MSG_PATH_NOT_FOUND, "missing directory with separator");
+    removeDir(root);
+}
+
+func test_move_file_and_dir(): void {
+    let root = "build/tmp/move_do";
+    make_tree(root);
+    expect(move_file(root + "/a.txt", root + "/sub/a.txt"), "moved");
+    expect(!exists(root + "/a.txt"), "source gone");
+    expectEq(readText(root + "/sub/a.txt"), "alpha\n", "content");
+    expect(move_file(root + "/b.txt", root + "/sub/a.txt"), "replaced");
+    expectEq(readText(root + "/sub/a.txt"), "bravo\n", "new content");
+    expect(!move_file(root + "/none.txt", root + "/x.txt"), "missing source");
+    expect(move_dir(root + "/dir", root + "/sub/moved"), "directory");
+    expect(isDir(root + "/sub/moved/inner"), "with its contents");
+    removeDir(root);
+}
+
+func test_copy_then_remove(): void {
+    let root = "build/tmp/move_copy";
+    make_tree(root);
+    expect(copy_then_remove(root + "/c.log", root + "/sub/c.log"), "copied");
+    expect(!exists(root + "/c.log"), "source removed");
+    expectEq(readText(root + "/sub/c.log"), "charlie\n", "content");
+    expect(copy_then_remove(root + "/a.txt", root + "/b.txt"), "over an existing file");
+    expectEq(readText(root + "/b.txt"), "alpha\n", "replaced");
+    removeDir(root);
+}
+
+func test_summary_line(): void {
+    expectEq(summary_line(1, false), "        1 file(s) moved.", "one file");
+    expectEq(summary_line(12, false), "       12 file(s) moved.", "twelve");
+    expectEq(summary_line(1, true), "        1 dir(s) moved.", "a directory");
+}

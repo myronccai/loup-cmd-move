@@ -1,64 +1,43 @@
 @mode(host.dual)
 
 from debug.assert import (expect, expectEq);
-from cli.args import (parse_args, DEFAULT_GREETING);
+from cli.args import (parse_args, copycmd_confirm, should_ask, CONFIRM_DEFAULT, CONFIRM_ASK, CONFIRM_NEVER);
 
-func test_no_arguments(): void {
-    let none: list[string] = [];
-    let opts = parse_args(none).unwrap();
-    expectEq(opts.command, "", "no command");
-    expectEq(opts.operands.len(), 0, "no operands");
-    expectEq(opts.greeting, DEFAULT_GREETING, "default greeting");
-    expect(!opts.help and !opts.version and !opts.verbose and !opts.shout, "no flags set");
+func test_operands(): void {
+    let opts = parse_args(["a.txt", "sub\\"]).unwrap();
+    expectEq(opts.operands.join(","), "a.txt,sub\\", "operands");
+    expectEq(opts.confirm, CONFIRM_DEFAULT, "nothing said");
 }
 
-func test_command_and_operands(): void {
-    let opts = parse_args(["hello", "Ann"]).unwrap();
-    expectEq(opts.command, "hello", "command");
-    expectEq(opts.operands.len(), 1, "one operand");
-    expectEq(opts.operands[0], "Ann", "operand");
+func test_confirm_switches(): void {
+    expectEq(parse_args(["/Y", "a", "b"]).unwrap().confirm, CONFIRM_NEVER, "/Y");
+    expectEq(parse_args(["a", "-y", "b"]).unwrap().confirm, CONFIRM_NEVER, "-y");
+    expectEq(parse_args(["/-Y", "a", "b"]).unwrap().confirm, CONFIRM_ASK, "/-Y");
+    expectEq(parse_args(["/Y", "/-y", "a", "b"]).unwrap().confirm, CONFIRM_ASK, "last one wins");
 }
 
-func test_flags_anywhere(): void {
-    let opts = parse_args(["-v", "hello", "--shout", "Ann"]).unwrap();
-    expect(opts.verbose, "verbose");
-    expect(opts.shout, "shout");
-    expectEq(opts.command, "hello", "command");
-    expectEq(opts.operands[0], "Ann", "operand");
+func test_paths_that_look_like_switches(): void {
+    let opts = parse_args(["/tmp/a", "/yes", "-x"]).unwrap();
+    expectEq(opts.operands.len(), 3, "all operands");
+}
+
+func test_copycmd(): void {
+    expectEq(copycmd_confirm(""), CONFIRM_DEFAULT, "empty");
+    expectEq(copycmd_confirm("/Y"), CONFIRM_NEVER, "/Y");
+    expectEq(copycmd_confirm("/v /-y"), CONFIRM_ASK, "/-y among others");
+}
+
+func test_should_ask(): void {
+    expect(should_ask(CONFIRM_DEFAULT, ""), "asks by default");
+    expect(!should_ask(CONFIRM_DEFAULT, "/Y"), "COPYCMD=/Y");
+    expect(should_ask(CONFIRM_ASK, "/Y"), "/-Y beats COPYCMD");
+    expect(!should_ask(CONFIRM_NEVER, "/-Y"), "/Y beats COPYCMD");
 }
 
 func test_help_and_version(): void {
+    expect(parse_args(["/?"]).unwrap().help, "/?");
+    expect(parse_args(["a", "-?"]).unwrap().help, "-?");
     expect(parse_args(["--help"]).unwrap().help, "--help");
-    expect(parse_args(["-h"]).unwrap().help, "-h");
     expect(parse_args(["--version"]).unwrap().version, "--version");
-    expect(parse_args(["-V"]).unwrap().version, "-V");
-}
-
-func test_value_option_forms(): void {
-    expectEq(parse_args(["-g", "Hi"]).unwrap().greeting, "Hi", "-g VALUE");
-    expectEq(parse_args(["--greeting", "Hi"]).unwrap().greeting, "Hi", "--greeting VALUE");
-    expectEq(parse_args(["--greeting=a=b"]).unwrap().greeting, "a=b", "--greeting=VALUE keeps '='");
-}
-
-func test_double_dash_ends_options(): void {
-    let opts = parse_args(["hello", "--", "--shout"]).unwrap();
-    expect(!opts.shout, "--shout after -- is an operand");
-    expectEq(opts.operands[0], "--shout", "operand");
-}
-
-func test_lone_dash_is_operand(): void {
-    let opts = parse_args(["hello", "-"]).unwrap();
-    expectEq(opts.operands[0], "-", "operand");
-}
-
-func test_unknown_option(): void {
-    expectEq(parse_args(["--nope"]).unwrap_err(), "unknown option '--nope'", "error message");
-}
-
-func test_missing_value(): void {
-    expectEq(parse_args(["-g"]).unwrap_err(), "option '-g' requires a value", "error message");
-}
-
-func test_flag_with_value(): void {
-    expectEq(parse_args(["--shout=1"]).unwrap_err(), "option '--shout' does not take a value", "error message");
+    expect(!parse_args(["--", "/?"]).unwrap().help, "/? after --");
 }
