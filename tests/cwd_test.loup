@@ -16,12 +16,12 @@ func test_normalize_absolute(): void {
 }
 
 func test_absolute_path(): void {
-    expectEq(absolute_path("x\\y.txt", "/home/me"), "/home/me/x/y.txt", "relative");
-    expectEq(absolute_path("..\\y", "/home/me"), "/home/y", "parent");
-    expectEq(absolute_path("/t/./a", "/home/me"), "/t/a", "absolute");
-    expectEq(absolute_path("x\\y", ""), "x/y", "unknown current directory");
+    expectEq(absolute_path("x\\y.txt", Some("/home/me")), "/home/me/x/y.txt", "relative");
+    expectEq(absolute_path("..\\y", Some("/home/me")), "/home/y", "parent");
+    expectEq(absolute_path("/t/./a", Some("/home/me")), "/t/a", "absolute");
+    expectEq(absolute_path("x\\y", None), "x/y", "unknown current directory");
 }
 
 func test_current_dir_is_absolute(): void {
-    expect(current_dir().startsWith("/"), "absolute");
+    expect((current_dir() ?? "").startsWith("/"), "known and absolute");
 }

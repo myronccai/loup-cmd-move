@@ -4,18 +4,21 @@
 # directory or to a new name, and moves or renames one directory.
 #
 # Runtime: host.dual. Compiled into the native binary build/move by
-# `make build`; `loup run source/main.loup` interprets the same code. Natively
-# the io.fs calls fail silently and Stage0 throws, so every step is checked on
-# disk afterwards. Renames go through runtime.fs().rename: io.fs's `rename`
-# aborts native builds.
+# `make build`; `make run` (Stage0's `loup-bootstrap run`) interprets the same
+# code. Natively the io.fs calls fail silently and Stage0 throws, so every
+# step is checked on disk afterwards; quietly() runs each io.fs call and turns
+# Stage0's exception into `false`. Renames go through runtime.fs().rename:
+# io.fs's `rename` aborts native builds.
 #
 # Structure: plan_move() turns the two operands into a Plan (the renames to
 # make, or the message that stops the command) without changing anything;
 # move_file(), move_dir() and copy_then_remove() carry out one Step and report
 # whether it is done; run_move() asks before overwriting, carries out the Plan
-# and is the only function that prints.
+# and is the only function that prints (a nested function reports a failed
+# step and sets the status).
 
 from appinfo import (EXIT_OK, EXIT_FAILURE);
+from core.string_utils import (padLeft);
 from cli.args import (Options, should_ask);
 from commands.cwd import (absolute_path, current_dir);
 from commands.prompt import (ANSWER_ALL, ANSWER_YES, ask_overwrite);
@@ -55,9 +58,9 @@ func plan_error(message: string): Plan {
     return Plan(steps = none, error = message, show_names = false);
 }
 
-# Plans `move SOURCE DEST`. `cwd` (absolute, or "" if unknown) is used to
+# Plans `move SOURCE DEST`. `cwd` (absolute, or None if unknown) is used to
 # refuse moving a directory into itself.
-pub func plan_move(source: string, dest: string, cwd: string): Plan {
+pub func plan_move(source: string, dest: string, cwd: string?): Plan {
     if (wildcard_in_directory(source) or has_wildcards(dest)) {
         return plan_error(MSG_INVALID_NAME);
     }
@@ -123,58 +126,54 @@ pub func plan_move(source: string, dest: string, cwd: string): Plan {
     return make_plan(steps, wild);
 }
 
-# The rename, ignoring the exception Stage0 throws on failure (native builds
-# fail silently); callers check the result on disk.
-func try_rename(src: string, dst: string): void {
+# Runs one file-system action and reports whether it finished without an
+# exception. Stage0 throws IoError when a file operation fails, while native
+# builds fail silently, so callers still check the result on disk. The
+# action is `noescape`: it is called here and never kept.
+func quietly(action: noescape fn(): void): bool {
     try {
-        runtime.fs().rename(src, dst);
-    } catch (Exception as e) {
-    }
-}
-
-func try_copy(src: string, dst: string): void {
-    try {
-        copy(src, dst);
-    } catch (Exception as e) {
-    }
-}
-
-func try_remove(path: string): void {
-    try {
-        remove(path);
-    } catch (Exception as e) {
+        action();
+        return true;
+    } catch {
+        return false;
     }
 }
 
 # The fallback when a rename fails (another file system): copy, check the
 # copy's size, then remove the source. Gives up, leaving the source, if any
-# step fails.
+# step fails. Each io.fs call goes through quietly(); its own answer does not
+# matter (`let _`), the checks on disk that follow decide.
 pub func copy_then_remove(src: string, dst: string): bool {
     if (!isFile(src)) {
         return false;
     }
     if (isFile(dst)) {
-        try_remove(dst);
+        let _ = quietly(func(): void { remove(dst); });
         if (isFile(dst)) {
             return false;
         }
     }
-    try_copy(src, dst);
+    let _ = quietly(func(): void { copy(src, dst); });
     if (!isFile(dst) or readBytes(dst).len() != readBytes(src).len()) {
         return false;
     }
-    try_remove(src);
+    let _ = quietly(func(): void { remove(src); });
     if (exists(src)) {
-        try_remove(dst);
+        let _ = quietly(func(): void { remove(dst); });
         return false;
     }
     return true;
 }
 
+# Renames `src` to `dst` (runtime.fs().rename: io.fs's own `rename` aborts
+# native builds); true when the rename did not throw.
+func rename_entry(src: string, dst: string): bool {
+    return quietly(func(): void { runtime.fs().rename(src, dst); });
+}
+
 # Moves one file, replacing `dst`; true when it is done.
 pub func move_file(src: string, dst: string): bool {
-    try_rename(src, dst);
-    if (!exists(src) and isFile(dst)) {
+    if (rename_entry(src, dst) and !exists(src) and isFile(dst)) {
         return true;
     }
     return copy_then_remove(src, dst);
@@ -183,23 +182,13 @@ pub func move_file(src: string, dst: string): bool {
 # Moves or renames a directory (a rename only, as on Windows: directories
 # do not move across file systems).
 pub func move_dir(src: string, dst: string): bool {
-    try_rename(src, dst);
-    return !exists(src) and isDir(dst);
-}
-
-func pad_left(text: string, width: int): string {
-    var parts: list[string] = [];
-    for (i in text.len()..width) {
-        parts.push(" ");
-    }
-    parts.push(text);
-    return parts.join("");
+    return rename_entry(src, dst) and !exists(src) and isDir(dst);
 }
 
 # `        2 file(s) moved.`, or `dir(s)` for a directory.
 pub func summary_line(count: int, dirs: bool): string {
     let what = if (dirs) { " dir(s) moved." } else { " file(s) moved." };
-    return pad_left(str(count), 9) + what;
+    return padLeft(str(count), 9, " ") + what;
 }
 
 pub func run_move(opts: Options): int {
@@ -217,6 +206,13 @@ pub func run_move(opts: Options): int {
     var moved = 0;
     var dirs = false;
     var status = EXIT_OK;
+    # A step that cannot be carried out prints Windows' message and makes
+    # the exit status 1; the other steps still run.
+    func access_denied(): void {
+        nonlocal status;
+        printErr(MSG_ACCESS_DENIED);
+        status = EXIT_FAILURE;
+    }
     for (step in plan.steps) {
         if (plan.show_names) {
             println(display_path(absolute_path(step.src, cwd)));
@@ -226,8 +222,7 @@ pub func run_move(opts: Options): int {
             if (move_dir(step.src, step.dst)) {
                 moved += 1;
             } else {
-                printErr(MSG_ACCESS_DENIED);
-                status = EXIT_FAILURE;
+                access_denied();
             }
             continue;
         }
@@ -236,8 +231,7 @@ pub func run_move(opts: Options): int {
             continue;
         }
         if (isDir(step.dst)) {
-            printErr(MSG_ACCESS_DENIED);
-            status = EXIT_FAILURE;
+            access_denied();
             continue;
         }
         if (ask and isFile(step.dst)) {
@@ -251,8 +245,7 @@ pub func run_move(opts: Options): int {
         if (move_file(step.src, step.dst)) {
             moved += 1;
         } else {
-            printErr(MSG_ACCESS_DENIED);
-            status = EXIT_FAILURE;
+            access_denied();
         }
     }
     println(summary_line(moved, dirs));
