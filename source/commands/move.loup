@@ -7,7 +7,9 @@
 # `make build`; `make run` (Stage0's `loup-bootstrap run`) interprets the same
 # code. Natively the io.fs calls fail silently and Stage0 throws, so every
 # step is checked on disk afterwards; quietly() runs each io.fs call and turns
-# Stage0's exception into `false`. Renames go through runtime.fs().rename:
+# Stage0's exception into `false`. The size check after a copy to another file
+# system uses commands/filesize.loup: C's stdio in the native binary, reading
+# the files in the interpreters. Renames go through runtime.fs().rename:
 # io.fs's `rename` aborts native builds.
 #
 # Structure: plan_move() turns the two operands into a Plan (the renames to
@@ -21,8 +23,9 @@ from appinfo import (EXIT_OK, EXIT_FAILURE);
 from core.string_utils import (padLeft);
 from cli.args import (Options, should_ask);
 from commands.cwd import (absolute_path, current_dir);
+from commands.filesize import (file_size, interpreted);
 from commands.prompt import (ANSWER_ALL, ANSWER_YES, ask_overwrite);
-from io.fs import (copy, exists, isDir, isFile, readBytes, remove);
+from io.fs import (copy, exists, isDir, isFile, remove);
 from win.messages import (MSG_ACCESS_DENIED, MSG_FILE_NOT_FOUND, MSG_INVALID_NAME, MSG_PATH_NOT_FOUND,
     MSG_SYNTAX);
 from win.paths import (base_name, display_path, fs_path, join_path, parent_dir, strip_trailing_separators);
@@ -140,7 +143,8 @@ func quietly(action: noescape fn(): void): bool {
 }
 
 # The fallback when a rename fails (another file system): copy, check the
-# copy's size, then remove the source. Gives up, leaving the source, if any
+# copy's size (from commands/filesize.loup: C's stdio natively, so neither
+# file is read), then remove the source. Gives up, leaving the source, if any
 # step fails. Each io.fs call goes through quietly(); its own answer does not
 # matter (`let _`), the checks on disk that follow decide.
 pub func copy_then_remove(src: string, dst: string): bool {
@@ -154,7 +158,8 @@ pub func copy_then_remove(src: string, dst: string): bool {
         }
     }
     let _ = quietly(func(): void { copy(src, dst); });
-    if (!isFile(dst) or readBytes(dst).len() != readBytes(src).len()) {
+    let by_reading = interpreted();
+    if (!isFile(dst) or file_size(dst, by_reading) != file_size(src, by_reading)) {
         return false;
     }
     let _ = quietly(func(): void { remove(src); });

@@ -115,7 +115,10 @@ move (loup-cmd-move) 0.1.0
   unless the `COPYCMD` environment variable contains `/Y`.
 
 Files move with a rename; when that fails (another file system), move
-copies the file, checks the copy's size and removes the original.
+copies the file, checks the copy's size and removes the original. The
+native binary gets both sizes from C's stdio without reading the files;
+run from source (`make run`, the unit tests), move reads them to measure
+them, since the interpreters cannot call C.
 
 Switches start with `/` or `-` in any case (`/y`, `-Y`). A `/X` that is not
 `/Y` or `/-Y` is a path (`move /tmp/a.txt .`), and `--` ends switch
@@ -163,6 +166,7 @@ source/cli/app.loup            # run(): parse, dispatch, exit status
 source/commands/move.loup      # plan_move(), move_file() (rename, copy fallback), run_move()
 source/commands/prompt.loup    # the Overwrite question, one line of stdin at a time
 source/commands/cwd.loup       # absolute paths for messages ($PWD or pwd)
+source/commands/filesize.loup  # file sizes: C's stdio natively, reading in the interpreters
 source/win/                    # shared Windows code: switches, wildcards, paths, messages
 tests/*_test.loup              # unit tests (make test)
 tests/e2e.sh                   # end-to-end tests of build/move (make e2e)

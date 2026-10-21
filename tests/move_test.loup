@@ -10,6 +10,7 @@
 from debug.assert import (expect, expectEq);
 from io.fs import (createDir, writeText, readText, removeDir, isDir, isFile, exists);
 from win.messages import (MSG_ACCESS_DENIED, MSG_FILE_NOT_FOUND, MSG_INVALID_NAME, MSG_PATH_NOT_FOUND);
+from commands.filesize import (file_size, interpreted);
 from commands.move import (plan_move, move_file, move_dir, copy_then_remove, summary_line,
     MSG_MULTIPLE_TO_ONE, MSG_FILE_EXISTS);
 
@@ -98,6 +99,16 @@ func test_copy_then_remove(): void {
     expectEq(readText(root + "/sub/c.log"), "charlie\n", "content");
     expect(copy_then_remove(root + "/a.txt", root + "/b.txt"), "over an existing file");
     expectEq(readText(root + "/b.txt"), "alpha\n", "replaced");
+    removeDir(root);
+}
+
+# Stage0 runs these tests, an interpreter, so sizes are read here; the C
+# path is used by the native binary (tests/e2e.sh).
+func test_file_size_by_reading(): void {
+    let root = "build/tmp/move_size";
+    make_tree(root);
+    expect(interpreted(), "the test runner is an interpreter");
+    expectEq(file_size(root + "/a.txt", true), 6, "read and measured");
     removeDir(root);
 }
 

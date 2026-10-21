@@ -190,5 +190,21 @@ reset; check_both "three operands"   1 '' $'The syntax of the command is incorre
 reset; check_both "unknown switch is a path" 1 '' "$nf"         /z sub
 check_state "errors change nothing" "$START"
 
+# From another file system (/dev/shm is a tmpfs of its own on Linux and on
+# the CI runner): the rename fails, so move copies the file, compares the
+# two sizes (through C's stdio natively) and removes the original. Where
+# /dev/shm is missing the case is skipped.
+if [ -d /dev/shm ] && [ -w /dev/shm ]; then
+    SHM=$(mktemp -d /dev/shm/loup-move-e2e.XXXXXX)
+    head -c 100000 /dev/zero > "$SHM/far.bin"
+    reset; check "from another file system" 0 "$one" "$SHM/far.bin" sub
+    if [ -f "$W/sub/far.bin" ] && [ "$(wc -c < "$W/sub/far.bin")" -eq 100000 ] && [ ! -e "$SHM/far.bin" ]; then
+        pass=$((pass + 1))
+    else
+        fail=$((fail + 1)); echo "FAIL: from another file system (files)"
+    fi
+    rm -rf "$SHM"
+fi
+
 echo "e2e: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

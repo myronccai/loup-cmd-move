@@ -1,0 +1,70 @@
+@mode(host.dual)
+
+# File sizes for move's copy check, without reading the files where the lane
+# allows it. A move to another file system copies the file and compares the
+# two sizes before it removes the source. Loup 1.26.0 has no stat(), and in
+# a native build every readBytes() result stays allocated until the program
+# ends, so reading both files to compare their lengths held twice the size
+# of every file moved that way.
+#
+# Runtime: host.dual, but the two lanes take different paths. In the native
+# binary build/move (`make build`) the size comes from C's stdio, declared
+# with `extern native "c"`: fopen, fseek to the end, ftell, fclose; nothing
+# is read. The interpreters cannot call C: `make run` (Stage0's
+# `loup-bootstrap run`) and Stage0's test runner stop at the first C call,
+# and that failure cannot be caught. There the file is read and measured, as
+# before.
+#
+# Structure: interpreted() tells the lanes apart; stdio_size() is the native
+# path; file_size() picks one. Which lane is running cannot be asked
+# directly in Loup 1.26.0: a build option read with `if const (options.*)`
+# exists only in `loup build`, and both interpreters reject it. So
+# interpreted() looks at the running program's name, which is `loup` or
+# `loup-bootstrap` for the interpreters. A wrong answer is only safe one way,
+# so anything unclear counts as interpreted: reading works in every lane.
+
+from io.fs import (isFile);
+
+extern native "c" func access(path: string, mode: int32): int32;
+extern native "c" func fopen(path: string, mode: string): NativeHandle;
+extern native "c" func fseek(f: NativeHandle, offset: int, whence: int32): int32;
+extern native "c" func ftell(f: NativeHandle): int;
+extern native "c" func fclose(f: NativeHandle): int32;
+
+const R_OK: int = 4;
+const SEEK_END: int = 2;
+
+# Whether this process is a Loup interpreter running the source, rather than
+# the compiled binary: true when /proc/self/comm names a `loup...` program,
+# or cannot be read.
+pub func interpreted(): bool {
+    let comm = "/proc/self/comm";
+    if (!isFile(comm)) {
+        return true;
+    }
+    return readText(comm).startsWith("loup");
+}
+
+# The size of a file through C's stdio, or -1 when it cannot be opened (a
+# NULL handle cannot be tested, so access() is asked first). Native binary
+# only.
+func stdio_size(path: string): int {
+    if (access(path, R_OK as int32) != (0 as int32)) {
+        return -1;
+    }
+    let f = fopen(path, "rb");
+    fseek(f, 0, SEEK_END as int32);
+    let size = ftell(f);
+    fclose(f);
+    return size;
+}
+
+# The size in bytes of the file at `path`, or -1 when it cannot be read.
+# `by_reading` is what interpreted() answered: true reads the file (the
+# interpreters' only way), false asks C's stdio.
+pub func file_size(path: string, by_reading: bool): int {
+    if (by_reading) {
+        return readBytes(path).len();
+    }
+    return stdio_size(path);
+}

@@ -35,7 +35,8 @@ mistakes. Load those only as needed.
 │   ├── commands/
 │   │   ├── move.loup            # plan_move(), move_file(), copy_then_remove(), move_dir(), run_move()
 │   │   ├── prompt.loup          # Overwrite question; read_line() via a `sh` child
-│   │   └── cwd.loup             # current_dir(), absolute_path()
+│   │   ├── cwd.loup             # current_dir(), absolute_path()
+│   │   └── filesize.loup        # file_size(): C's stdio natively, reading in the interpreters
 │   └── win/                     # shared Windows code (a copy; see below)
 │       ├── switches.loup        # cmd switch parser: /S -s /A:H /AH /T 10 /S/Q /? --
 │       ├── wildcard.loup        # Win32 wildcard matcher, expand(), find_recursive()
