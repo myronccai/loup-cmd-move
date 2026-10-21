@@ -1,7 +1,12 @@
 @mode(host.dual)
 
 # Command-line parsing for move, with the shared Windows switch parser
-# (win/switches.loup). A `/X` that is not /Y or /-Y is a path.
+# (win/switches.loup). A `/X` that is not /Y or /-Y is a path. Also decides
+# whether to ask before overwriting: the last /Y or /-Y on the command line,
+# else the COPYCMD variable, else ask.
+#
+# Runtime: host.dual. Compiled into the native binary build/move by
+# `make build`; `loup run source/main.loup` interprets the same code.
 
 from win.switches import (SwitchSpec, flag, parse_switches, switch_error_message);
 

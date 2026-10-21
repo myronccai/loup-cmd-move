@@ -1,9 +1,19 @@
 @mode(host.dual)
 
 # move: moves files (a wildcard source moves every matching file) into a
-# directory or to a new name, and moves or renames one directory. The plan
-# (what goes where, or why nothing can) is a pure value; run_move carries
-# it out, asks before overwriting, and prints.
+# directory or to a new name, and moves or renames one directory.
+#
+# Runtime: host.dual. Compiled into the native binary build/move by
+# `make build`; `loup run source/main.loup` interprets the same code. Natively
+# the io.fs calls fail silently and Stage0 throws, so every step is checked on
+# disk afterwards. Renames go through runtime.fs().rename: io.fs's `rename`
+# aborts native builds.
+#
+# Structure: plan_move() turns the two operands into a Plan (the renames to
+# make, or the message that stops the command) without changing anything;
+# move_file(), move_dir() and copy_then_remove() carry out one Step and report
+# whether it is done; run_move() asks before overwriting, carries out the Plan
+# and is the only function that prints.
 
 from appinfo import (EXIT_OK, EXIT_FAILURE);
 from cli.args import (Options, should_ask);
@@ -51,6 +61,7 @@ pub func plan_move(source: string, dest: string, cwd: string): Plan {
     if (wildcard_in_directory(source) or has_wildcards(dest)) {
         return plan_error(MSG_INVALID_NAME);
     }
+    # The sources: the files a wildcard matches, or one file or directory.
     let wild = has_wildcards(source);
     var sources: list[string] = [];
     var src_is_dir = false;
@@ -75,6 +86,8 @@ pub func plan_move(source: string, dest: string, cwd: string): Plan {
         }
     }
 
+    # The destination: an existing directory takes every source under its
+    # own name; anything else is the new name of the single source.
     let d = fs_path(dest);
     let target = strip_trailing_separators(d);
     if (target.len() == 0) {
@@ -99,6 +112,7 @@ pub func plan_move(source: string, dest: string, cwd: string): Plan {
         steps.push(make_step(sources[0], target, src_is_dir));
     }
 
+    # A directory cannot move into itself or below itself.
     if (src_is_dir) {
         let origin = absolute_path(steps[0].src, cwd);
         let to = absolute_path(steps[0].dst, cwd);
